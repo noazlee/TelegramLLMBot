@@ -131,6 +131,28 @@ async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_photo(chat_id=update.effective_chat.id,
                                photo=image_response.content)
 
+async def transcribe_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Make sure we have a voice file to transcribe
+    voice_id = update.message.voice.file_id
+    if voice_id:
+        file = await context.bot.get_file(voice_id)
+        await file.download_to_drive(f"voice_note_{voice_id}.ogg")
+        await update.message.reply_text("Voice note downloaded, transcribing now")
+        audio_file = open(f"voice_note_{voice_id}.ogg", "rb")
+        transcript = openai.audio.transcriptions.create(
+        model="whisper-1", file=audio_file
+        )
+        messages.append({"role": "user", "content": transcript.text})
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages
+        )
+        # Feed it back into the LLM
+        response_message = response.choices[0].message
+        messages.append(response_message)
+        await update.message.reply_text(f"Transcript finished:\n{transcript.text}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=response_message.content)
+
 async def main() -> None:
     application = ApplicationBuilder().token(tg_bot_token).build()
 
@@ -138,11 +160,13 @@ async def main() -> None:
     chat_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), chat)
     image_handler = CommandHandler('image', image)
     mozilla_handler = CommandHandler('mozilla', mozilla)
+    voice_handler = MessageHandler(filters.VOICE, transcribe_message)
 
     application.add_handler(start_handler)
     application.add_handler(chat_handler)
     application.add_handler(image_handler)
     application.add_handler(mozilla_handler)
+    application.add_handler(voice_handler)
 
     await application.run_polling()
 
