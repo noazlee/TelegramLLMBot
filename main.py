@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes, CommandHandler, ApplicationBuilder, Messa
 from openai import OpenAI
 import asyncio
 import nest_asyncio
+import requests
 from functions import functions, run_function
 import json
 
@@ -120,19 +121,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id,
                                   text="I am a bot, please talk to me.")
 
+async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    response = openai.images.generate(prompt=update.message.text,
+                                    model="dall-e-3",
+                                    n=1,
+                                    size="1024x1024")
+    image_url = response.data[0].url
+    image_response = requests.get(image_url)
+    await context.bot.send_photo(chat_id=update.effective_chat.id,
+                               photo=image_response.content)
+
 async def main() -> None:
     application = ApplicationBuilder().token(tg_bot_token).build()
 
     start_handler = CommandHandler('start', start)
     chat_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), chat)
+    image_handler = CommandHandler('image', image)
     mozilla_handler = CommandHandler('mozilla', mozilla)
 
     application.add_handler(start_handler)
     application.add_handler(chat_handler)
+    application.add_handler(image_handler)
     application.add_handler(mozilla_handler)
 
     await application.run_polling()
 
+# Check if the script is run directly (not imported)
 if __name__ == '__main__':
     try:
         asyncio.run(main())
