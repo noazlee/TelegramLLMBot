@@ -9,6 +9,8 @@ from openai import OpenAI
 import asyncio
 import nest_asyncio
 import requests
+import time
+
 from functions import functions, run_function
 import json
 
@@ -53,65 +55,49 @@ df['embeddings'] = df['embeddings'].apply(eval).apply(np.array)
 openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 tg_bot_token = os.environ['TG_BOT_TOKEN']
 
-messages = [{
-    "role":"system",
-    "content":"You are a helpful assistant that answers questions."
-},{
-    "role":"system",
-    "content":CODE_PROMPT
-}]
+assistant = openai.beta.assistants.create(
+    name="Telegram Bot",
+    instructions=CODE_PROMPT,
+    tools=[
+    {"type": "code_interpreter"},
+    ],
+    model="gpt-4-0125-preview",
+)
+
+THREAD = openai.beta.threads.create()
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - $(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  messages.append({"role": "user", "content": update.message.text})
-  initial_response = openai.chat.completions.create(model="gpt-3.5-turbo",
-                                                    messages=messages,
-                                                    tools=functions)
-  initial_response_message = initial_response.choices[0].message
-  messages.append(initial_response_message)
-  final_response = None
-  tool_calls = initial_response_message.tool_calls
-    
-  if tool_calls:
-    for tool_call in tool_calls:
-      name = tool_call.function.name
-      args = json.loads(tool_call.function.arguments)
-      response = run_function(name, args)
-      print(tool_calls)
-      messages.append({
-          "tool_call_id": tool_call.id,
-          "role": "tool",
-          "name": name,
-          "content": str(response),
-      })
-      if name == 'svg_to_png_bytes':
-        await context.bot.send_photo(chat_id=update.effective_chat.id,
-                                     photo=response)
-      # Generate the final response
-      final_response = openai.chat.completions.create(
-          model="gpt-3.5-turbo",
-          messages=messages,
-      )
-      final_answer = final_response.choices[0].message
+def wait_on_run(run, thread):
+    while run.status in ("queued", "in_progress"):
+        print(run.status)
+        run = openai.beta.threads.runs.retrieve(
+        thread_id=thread.id,
+        run_id=run.id,
+        )
+        time.sleep(0.5)
+    return run
 
-      # Send the final response if it exists
-      if (final_answer):
-        messages.append(final_answer)
-        await context.bot.send_message(chat_id=update.effective_chat.id,
-                                       text=final_answer.content)
-      else:
-        # Send an error message if something went wrong
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text='something wrong happened, please try again')
-  #no functions were execute
-  else:
-    await context.bot.send_message(chat_id=update.effective_chat.id,
-                                   text=initial_response_message.content)
+async def assistant_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = openai.beta.threads.messages.create(
+    thread_id=THREAD.id, role="user", content=update.message.text
+    )
+    run = openai.beta.threads.runs.create(
+    thread_id=THREAD.id, assistant_id=assistant.id
+    )
+    run = wait_on_run(run, THREAD)
+    # Grab all of our message history
+    messages = openai.beta.threads.messages.list(
+    thread_id=THREAD.id, order="asc", after=message.id
+    )
+    # Extract the message content
+    message_content = messages.data[0].content[0].text
+    await context.bot.send_message(
+    chat_id=update.effective_chat.id, text=message_content.value
+    )
 
 async def mozilla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = answer_question(df, question=update.message.text, debug=True)
@@ -120,7 +106,7 @@ async def mozilla(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id,
                                   text="I am a bot, please talk to me.")
-
+    
 async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = openai.images.generate(prompt=update.message.text,
                                     model="dall-e-3",
@@ -153,11 +139,12 @@ async def transcribe_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"Transcript finished:\n{transcript.text}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=response_message.content)
 
+# Main function to run the bot
 async def main() -> None:
     application = ApplicationBuilder().token(tg_bot_token).build()
 
     start_handler = CommandHandler('start', start)
-    chat_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), chat)
+    chat_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), assistant_chat)
     image_handler = CommandHandler('image', image)
     mozilla_handler = CommandHandler('mozilla', mozilla)
     voice_handler = MessageHandler(filters.VOICE, transcribe_message)
@@ -180,3 +167,4 @@ if __name__ == '__main__':
             loop.run_until_complete(main())
         else:
             raise
+        

@@ -1,11 +1,3 @@
-from wand.image import Image
-
-def svg_to_png_bytes(svg_string): 
-    # Convert SVG string to PNG bytes
-    with Image(blob=svg_string.encode('utf-8'), format='svg') as img:
-        img.format = 'png'
-        png_bytes = img.make_blob()
-    return png_bytes
 
 def python_math_execution(math_string):
     try:
@@ -16,25 +8,6 @@ def python_math_execution(math_string):
         return 'invalid code generated' 
 
 functions = [ 
-    {
-        "type": "function",
-        "function": {
-            "name": "svg_to_png_bytes",
-            "description": "Generate a PNG from an SVG",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "svg_string": {
-                        "type":
-                        "string",
-                        "description":
-                        "A fully formed SVG element in the form of a string",
-                    },
-                },
-                "required": ["svg_string"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
